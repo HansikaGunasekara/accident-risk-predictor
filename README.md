@@ -1,4 +1,4 @@
-### 🚗 Accident Risk Predictor
+# 🚗 Accident Risk Predictor
 This project is an interactive Streamlit web application that predicts the accident risk level for a given set of road and environmental conditions.
 It uses a trained hybrid ensemble model to estimate risk based on factors such as speed limit, curvature, lighting, weather, and more.
 
