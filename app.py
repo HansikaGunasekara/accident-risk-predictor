@@ -1,35 +1,113 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import pickle
 import os
-import urllib.request
+import zipfile
 
-# ===============================
-# App configuration
-# ===============================
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestRegressor, StackingRegressor
+from sklearn.linear_model import Ridge
+from xgboost import XGBRegressor
+
 st.set_page_config(page_title="Accident Risk Predictor", page_icon="🚦", layout="wide")
 st.title("🚦 Road Accident Risk Prediction")
 
-model_URL = "https://drive.google.com/file/d/13r9fKP69ZNOCMOwBCEfg30Km2NlLxtWE/view?usp=share_link"
 model_file = "trained_model.pkl"
+train_zip_file = "train.zip"
+unzipped_folder = "train_data"
 
-if not os.path.exists(model_file):
-    urllib.request.urlretrieve(model_URL, model_file)
+# Unzip train.zip if not already unzipped
+if not os.path.exists(unzipped_folder):
+    with zipfile.ZipFile(train_zip_file, 'r') as zip_ref:
+        zip_ref.extractall(unzipped_folder)
+    st.info(f"📦 Extracted {train_zip_file} to {unzipped_folder}")
 
+# Assume inside the unzipped folder there is a CSV file, for example 'train.csv'
+train_csv_path = os.path.join(unzipped_folder, "train.csv")
 
-# ===============================
-# Load trained model
-# ===============================
+# Load training data
+try:
+    train_df = pd.read_csv(train_csv_path)
+    st.success("✅ Training data loaded successfully from zip!")
+except Exception as e:
+    st.error(f"Failed to load training CSV: {e}")
+    st.stop()
+
+# Feature engineering
+train_df['speed_category'] = train_df['speed_limit'].apply(lambda x: 'high_speed' if x in [60, 70] else 'low_speed')
+train_df['high_curvature'] = (train_df['curvature'] > 0.7).astype(int)
+
+features = [
+    'road_type', 'num_lanes', 'curvature', 'speed_limit',
+    'lighting', 'weather', 'road_signs_present',
+    'public_road', 'time_of_day', 'holiday', 'school_season',
+    'num_reported_accidents', 'speed_category', 'high_curvature'
+]
+target = 'accident_risk'
+
+bool_cols = ['road_signs_present', 'public_road', 'holiday', 'school_season', 'high_curvature']
+for col in bool_cols:
+    train_df[col] = train_df[col].astype(int)
+
+numeric_features = ['num_lanes', 'curvature', 'speed_limit',
+                    'road_signs_present', 'public_road', 'holiday',
+                    'school_season', 'num_reported_accidents', 'high_curvature']
+categorical_features = ['road_type', 'lighting', 'weather', 'time_of_day', 'speed_category']
+
+numeric_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='mean')),
+    ('scaler', StandardScaler())
+])
+categorical_transformer = Pipeline(steps=[
+    ('imputer', SimpleImputer(strategy='most_frequent')),
+    ('encoder', OneHotEncoder(handle_unknown='ignore'))
+])
+preprocessor = ColumnTransformer(transformers=[
+    ('num', numeric_transformer, numeric_features),
+    ('cat', categorical_transformer, categorical_features)
+])
+
+xgb = XGBRegressor(n_estimators=100, max_depth=6, learning_rate=0.1,
+                   objective='reg:squarederror', random_state=42, n_jobs=-1)
+rf = RandomForestRegressor(n_estimators=100, random_state=42)
+meta_model = Ridge(alpha=1.0)
+
+stacked_regressor = StackingRegressor(
+    estimators=[('xgb', xgb),
+                ('rf', rf)],
+    final_estimator=meta_model,
+    passthrough=True,
+    n_jobs=-1
+)
+
+model_pipeline = Pipeline(steps=[
+    ('preprocessor', preprocessor),
+    ('regressor', stacked_regressor)
+])
+
+# Training button
+if st.button("🚀 Train & Save Model"):
+    X_train = train_df[features]
+    y_train = train_df[target]
+
+    with st.spinner("🧠 Training model... please wait"):
+        model_pipeline.fit(X_train, y_train)
+
+    with open(model_file, "wb") as f:
+        pickle.dump(model_pipeline, f)
+    st.success(f"✅ Model trained and saved as `{model_file}`")
+
+# Manual input prediction section
+st.header("🧮 Predict Accident Risk from Manual Input")
+
 if os.path.exists(model_file):
     with open(model_file, "rb") as f:
         model = pickle.load(f)
-
     st.success("✅ Loaded trained model for prediction!")
-
-    # ===============================
-    # Manual input form
-    # ===============================
-    st.header("🧮 Predict Accident Risk from Manual Input")
 
     with st.form("prediction_form"):
         st.subheader("Enter Road Details:")
@@ -49,9 +127,6 @@ if os.path.exists(model_file):
 
         submitted = st.form_submit_button("🔍 Predict Risk")
 
-    # ===============================
-    # Predict when user submits form
-    # ===============================
     if submitted:
         speed_category = "high_speed" if speed_limit in [60, 70] else "low_speed"
         high_curvature = int(curvature > 0.7)
@@ -77,4 +152,4 @@ if os.path.exists(model_file):
         st.metric("🚧 Predicted Accident Risk", f"{prediction:.4f}")
 
 else:
-    st.error("⚠️ `trained_model.pkl` not found in the app directory. Please add it first.")
+    st.warning(f"⚠️ Please train and save a model first by clicking the Train button above.")
