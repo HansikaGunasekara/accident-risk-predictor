@@ -17,3 +17,6 @@ In addition, there is a dashboard to find data trends & insights from the traini
 - XGBoost
 - Pandas, NumPy
 - PowerBI Dashboard
+
+## 🕹️ Streamlit App
+https://accident-risk-predictor-n32nsxbjtjfahgteq2tkvn.streamlit.app
